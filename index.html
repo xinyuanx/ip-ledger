@@ -2936,7 +2936,6 @@ createApp({
       if(!cloud&&!local){ savedAt.value='初始 Excel 数据（'+SEED.length+' 条）'; }
     }
     function reloadCloud(){
-      if(!sys.syncUrl){ toast('未配置云端同步地址'); return; }
       initLoad(); toast('已从云端刷新');
     }
     async function syncToCloud(){
