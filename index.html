@@ -1,8 +1,6 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <!-- 最后更新：2026-11-02 19:44（PAT 已删除，改用 gho 令牌发布）-->
-
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>研究院 · 知识产权台账管理系统</title>
@@ -153,7 +151,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
   <aside class="sidebar">
     <div class="brand">
       <div class="logo">研</div>
-      <div><h1>知识产权台账</h1><small>研究院 · 知识产权管理</small></div>
+      <div><h1>{{sys.name}}</h1><small>研究院 · 知识产权管理</small></div>
     </div>
     <nav class="menu">
       <div class="grp">总览</div>
@@ -2727,7 +2725,7 @@ const XLSX_LITE = (()=>{
   return {build};
 })();
 
-const { createApp, ref, computed, reactive } = Vue;
+const { createApp, ref, computed, reactive, watch } = Vue;
 
 createApp({
   setup(){
@@ -2769,6 +2767,7 @@ createApp({
     const colVisible=reactive({}); COLS.forEach(c=>colVisible[c.k]=true);
     const savedAt=ref('');
     const sys=reactive({name:'研究院知识产权台账管理系统',prefix:'IPL',days:60,owner:'科研管理部',api:'http://localhost:8080/api',autoSave:true,storeKey:'ipl_ledger_state_v2'});
+    watch(()=>sys.name, v=>{ if(v) document.title=v; }, {immediate:true});
     const detail=reactive({show:false,tab:'base',row:{}});
     const form=reactive({show:false,id:null,row:{}});
 
@@ -2897,17 +2896,18 @@ createApp({
     function toggleAll(e){ selected.value = e.target.checked ? paged.value.map(r=>r.id) : []; }
     function setScope(s){ exportScope.value=s; toast(s==='all'?'导出范围：全部数据':'导出范围：当前筛选'); }
 
+    function serializeSys(){ return {name:sys.name,prefix:sys.prefix,days:sys.days,owner:sys.owner,api:sys.api,autoSave:sys.autoSave}; }
     /* ====== 保存 / 持久化 ====== */
     function persist(){
       if(!sys.autoSave) return;
       try{
-        localStorage.setItem(sys.storeKey, JSON.stringify({rows:rows.value, savedAt:new Date().toISOString()}));
+        localStorage.setItem(sys.storeKey, JSON.stringify({rows:rows.value, sys:serializeSys(), savedAt:new Date().toISOString()}));
         savedAt.value='已保存 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
       }catch(e){ toast('本地保存失败：'+e.message); }
     }
     function saveLocal(notify){
       try{
-        localStorage.setItem(sys.storeKey, JSON.stringify({rows:rows.value, savedAt:new Date().toISOString()}));
+        localStorage.setItem(sys.storeKey, JSON.stringify({rows:rows.value, sys:serializeSys(), savedAt:new Date().toISOString()}));
         savedAt.value='已保存 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
         if(notify) toast('已保存 '+rows.value.length+' 条记录到本地');
       }catch(e){ toast('保存失败：'+e.message); }
@@ -2922,7 +2922,8 @@ createApp({
     (function load(){
       try{
         const raw=localStorage.getItem(sys.storeKey);
-        if(raw){ const o=JSON.parse(raw); if(o&&Array.isArray(o.rows)&&o.rows.length){ rows.value=o.rows; savedAt.value='已加载本地存档 '+(o.savedAt||'').slice(0,19).replace('T',' '); } }
+        if(raw){ const o=JSON.parse(raw); if(o&&Array.isArray(o.rows)&&o.rows.length){ rows.value=o.rows; savedAt.value='已加载本地存档 '+(o.savedAt||'').slice(0,19).replace('T',' '); }
+          if(o&&o.sys){ Object.assign(sys, o.sys); document.title=sys.name; } }
       }catch(e){}
     })();
 
