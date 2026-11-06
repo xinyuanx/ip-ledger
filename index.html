@@ -77,6 +77,7 @@ body{font-family:"Microsoft YaHei","PingFang SC",Segoe UI,sans-serif;background:
 .btn.primary:hover{background:var(--primary-d)}
 .btn.sm{height:28px;padding:0 10px;font-size:12px}
 .link{color:var(--primary);cursor:pointer;font-size:12.5px;margin-right:10px}
+.syncbar{display:flex;gap:8px;align-items:center;margin:2px 0 14px}
 .link:hover{text-decoration:underline}
 table{width:100%;border-collapse:collapse}
 th{background:#f8fafc;text-align:left;font-weight:600;font-size:12.5px;color:#475569;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;z-index:2}
@@ -199,6 +200,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
     <div class="content">
       <!-- 仪表盘 -->
       <template v-if="view==='dash'">
+<div class="syncbar"><button class="btn primary" @click="syncToCloud" style="background:var(--primary)">☁ 同步到云端</button><button class="btn" @click="reloadCloud" style="border-color:var(--primary);color:var(--primary)">☁ 从云端刷新</button></div>
         <div class="stats">
           <div class="stat" v-for="s in statCards" :key="s.k">
             <div class="deco"></div>
@@ -298,6 +300,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
 
       <!-- 待办中心 -->
       <template v-else-if="view==='todo'">
+<div class="syncbar"><button class="btn primary" @click="syncToCloud" style="background:var(--primary)">☁ 同步到云端</button><button class="btn" @click="reloadCloud" style="border-color:var(--primary);color:var(--primary)">☁ 从云端刷新</button></div>
         <div class="stats">
           <div class="stat" v-for="s in todoStats" :key="s.k">
             <div class="deco"></div><div class="t">{{s.t}}</div><div class="v">{{s.v}}<span class="u">件</span></div><div class="d">{{s.d}}</div>
@@ -328,6 +331,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
 
       <!-- 数据质量 -->
       <template v-else-if="view==='quality'">
+<div class="syncbar"><button class="btn primary" @click="syncToCloud" style="background:var(--primary)">☁ 同步到云端</button><button class="btn" @click="reloadCloud" style="border-color:var(--primary);color:var(--primary)">☁ 从云端刷新</button></div>
         <div class="card">
           <div class="card-h"><h3>数据质量核查</h3><span class="sub">共 {{qualityRows.length}} 条待核</span>
             <div class="right"><button class="btn sm" @click="doExport('summary')">导出核查结果</button></div></div>
@@ -376,6 +380,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
 
       <!-- 成果转化 -->
       <template v-else-if="view==='transfer'">
+<div class="syncbar"><button class="btn primary" @click="syncToCloud" style="background:var(--primary)">☁ 同步到云端</button><button class="btn" @click="reloadCloud" style="border-color:var(--primary);color:var(--primary)">☁ 从云端刷新</button></div>
         <div class="stats">
           <div class="stat" v-for="s in transferStats" :key="s.k">
             <div class="deco"></div><div class="t">{{s.t}}</div>
@@ -407,6 +412,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
 
       <!-- 台账列表 -->
       <template v-else-if="view!=='sys' && view!=='quality' && view!=='transfer' && view!=='todo'">
+<div class="syncbar"><button class="btn primary" @click="syncToCloud" style="background:var(--primary)">☁ 同步到云端</button><button class="btn" @click="reloadCloud" style="border-color:var(--primary);color:var(--primary)">☁ 从云端刷新</button></div>
         <div class="card">
           <div class="card-h"><h3>{{currentTitle}}</h3><span class="sub">共 {{filtered.length}} 条 / 全库 {{rows.length}} 条</span>
             <div class="right">
