@@ -425,6 +425,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
                 </div>
               </div>
               <button class="btn sm" @click="doExport('ledger')">导出 Excel</button>
+              <button class="btn sm" style="color:var(--danger);border-color:var(--danger)" v-if="selected.length" @click="bulkDelete">删除选中 ({{selected.length}})</button>
             </div>
           </div>
           <div class="card-b">
@@ -500,6 +501,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
               <div class="field"><label>自动保存到本地</label>
                 <select v-model="sys.autoSave" @change="saveLocal(false)"><option :value="true">开启（每次修改立即保存）</option><option :value="false">关闭</option></select></div>
               <div class="field"><label>本地存储键</label><input v-model="sys.storeKey" /></div>
+              <div class="field"><label>云端自动同步</label><select v-model="sys.autoSync" @change="saveLocal(false);startAuto()"><option :value="true">开启（改动后自动推送到云端）</option><option :value="false">关闭（仅手动同步）</option></select></div>
               <div class="field full"><label>GitHub 令牌</label><input type="password" v-model="ghToken" placeholder="粘贴 GitHub 细粒度令牌（仅存本机浏览器，不进仓库）" /></div>
               <div class="field full"><span style="padding:4px 0;color:var(--muted)">点「☁ 同步到云端」即把数据写回仓库 data.json，其他设备打开即同步。令牌仅保存在你本机，不会写入仓库或 data.json。</span></div>
               <div class="field full"><label>对接后端服务</label><input v-model="sys.api" /></div>
@@ -514,12 +516,12 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
               <button class="btn" @click="reloadCloud" style="border-color:var(--primary);color:var(--primary)">☁ 从云端刷新</button>
               <button class="btn primary" @click="syncToCloud" style="background:var(--primary)">☁ 同步到云端</button>
             </div>
-            <div class="note" style="margin-top:14px">
-              保存说明：所有修改在开启自动保存时立即写入本浏览器 localStorage，刷新不丢失（仅本机可见）；<br>
-              点「☁ 同步到云端」，数据直接写回 GitHub 仓库的 data.json，<b>其他电脑/手机打开即同步可见</b>（GitHub Pages 重建约 1 分钟）；<br>
-              打开页面时优先加载云端 data.json，再用本机 localStorage 覆盖（本机未同步的改动仍在本机显示）。<br>
-              当前状态：<b>{{savedAt || '尚未保存'}}</b>，共 {{rows.length}} 条记录。
-            </div>
+             <div class="note" style="margin-top:14px">
+               保存说明：所有修改在开启自动保存时立即写入本机浏览器 localStorage，刷新不丢失（仅本机可见）；<br>
+               <b>云端自动刷新</b>：页面每 60 秒静默从云端 data.json 拉取一次，他人改动自动出现，无需手动点；<br>
+               <b>云端自动同步</b>：在上方填入 GitHub 令牌并开启「云端自动同步」后，每次改动约 6 秒自动推回 data.json，<b>其他设备打开即同步可见</b>（GitHub Pages 重建约 1 分钟）；<br>
+               也可随时手动点「☁ 从云端刷新 / 同步到云端」。当前状态：<b>{{savedAt || '尚未保存'}}</b>，共 {{rows.length}} 条记录。
+             </div>
           </div>
         </div>
         <div class="card">
@@ -2779,7 +2781,7 @@ createApp({
     const expMenu=ref(false), colMenu=ref(false), exportScope=ref('all');
     const colVisible=reactive({}); COLS.forEach(c=>colVisible[c.k]=true);
     const savedAt=ref('');
-    const sys=reactive({name:'研究院知识产权台账管理系统',prefix:'IPL',days:60,owner:'科研管理部',api:'http://localhost:8080/api',autoSave:true,storeKey:'ipl_ledger_state_v2',syncUrl:''});
+    const sys=reactive({name:'研究院知识产权台账管理系统',prefix:'IPL',days:60,owner:'科研管理处',api:'http://localhost:8080/api',autoSave:true,autoSync:true,storeKey:'ipl_ledger_state_v2',syncUrl:''});
     const ghToken=ref('');
     watch(()=>sys.name, v=>{ if(v) document.title=v; }, {immediate:true});
     watch(ghToken, v=>{ try{ localStorage.setItem('ipl_gh_token', v||''); }catch(e){} });
@@ -2904,10 +2906,19 @@ createApp({
     function save(){
       if(!form.row.name){ toast('请填写专利名称'); return; }
       if(form.id){ const i=rows.value.findIndex(x=>x.id===form.id); rows.value[i]={...form.row}; toast('已保存修改'); }
-      else { rows.value.unshift({...form.row,id:Date.now()}); toast('新增台账成功'); }
-      form.show=false; persist();
+      else { rows.value.unshift({...form.row,id:Date.now()}); toast('新增成功'); }
+      form.show=false; persist(); autoPush();
     }
-    function del(r){ if(confirm(`确认删除「${r.name}」？`)){ rows.value=rows.value.filter(x=>x.id!==r.id); toast('已删除'); persist(); } }
+    function del(r){ if(confirm(`确认删除「${r.name}」？`)){ rows.value=rows.value.filter(x=>x.id!==r.id); toast('已删除'); persist(); autoPush(); } }
+    async function bulkDelete(){
+      if(!selected.value||!selected.value.length){ toast('请先勾选要删除的记录'); return; }
+      if(!confirm(`确认删除选中的 ${selected.value.length} 条记录？此操作不可撤销`)) return;
+      const set=new Set(selected.value);
+      rows.value=rows.value.filter(r=>!set.has(r.id));
+      selected.value=[];
+      toast('已删除选中记录');
+      persist(); autoPush();
+    }
     function toggleAll(e){ selected.value = e.target.checked ? paged.value.map(r=>r.id) : []; }
     function setScope(s){ exportScope.value=s; toast(s==='all'?'导出范围：全部数据':'导出范围：当前筛选'); }
 
@@ -2929,13 +2940,13 @@ createApp({
       }catch(e){ toast('保存失败：'+e.message); }
     }
     function restoreSeed(){
-      if(!confirm('将丢弃本地所有修改，恢复为 Excel 原始数据。继续？')) return;
+      if(!confirm('将清空本机所有修改，恢复为 Excel 原始数据。继续？')) return;
       rows.value=SEED.map(r=>({...r}));
       try{ localStorage.removeItem(sys.storeKey); }catch(e){}
       savedAt.value='已恢复原始数据';
-      toast('已恢复为 Excel 原始数据（'+SEED.length+' 条）');
+      toast('已恢复为 Excel 原始数据，'+SEED.length+' 条');
+      autoPush();
     }
-    const GH_REPO='xinyuanx/ip-ledger';
     async function initLoad(){
       let cloud=null;
       try{ const r=await fetch('data.json?t='+Date.now(),{cache:'no-store'}); if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.rows)&&j.rows.length) cloud=j; } }catch(e){}
@@ -2945,26 +2956,36 @@ createApp({
       if(cloud){ rows.value=cloud.rows; if(cloud.sys) Object.assign(sys, cloud.sys); savedAt.value='云端共享 '+((cloud.savedAt||'').slice(0,19).replace('T',' ')||'已就绪'); document.title=sys.name; }
       if(local&&Array.isArray(local.rows)&&local.rows.length){ rows.value=local.rows; if(local.sys) Object.assign(sys, local.sys); savedAt.value='本地存档 '+((local.savedAt||'').slice(0,19).replace('T',' ')); document.title=sys.name; }
       if(!cloud&&!local){ savedAt.value='初始 Excel 数据（'+SEED.length+' 条）'; }
+      startAuto();
     }
     function reloadCloud(){
       initLoad(); toast('已从云端刷新');
     }
-    async function syncToCloud(){
-      if(!ghToken.value){ toast('请在系统设置填写 GitHub 令牌后再同步'); return; }
+    const GH_REPO='xinyuanx/ip-ledger';
+    async function pushCloud(skipConfirm){
+      if(!ghToken.value){ if(!skipConfirm) toast('请在系统设置填写 GitHub 令牌后再同步'); return false; }
+      if(!skipConfirm && !confirm('将本页全部数据覆盖保存到云端 data.json？')) return false;
       try{
         const data={rows:rows.value, sys:serializeSys(), savedAt:new Date().toISOString()};
         const content=btoa(unescape(encodeURIComponent(JSON.stringify(data))));
         let sha=null;
         try{ const g=await fetch('https://api.github.com/repos/'+GH_REPO+'/contents/data.json',{headers:{Authorization:'Bearer '+ghToken.value,'User-Agent':'ip-ledger','Accept':'application/vnd.github+json'}}); if(g.ok){ const j=await g.json(); sha=j.sha; } }catch(e){}
-        const r=await fetch('https://api.github.com/repos/'+GH_REPO+'/contents/data.json',{
-          method:'PUT',
-          headers:{'Content-Type':'application/json','Accept':'application/vnd.github+json','User-Agent':'ip-ledger',Authorization:'Bearer '+ghToken.value},
-          body:JSON.stringify({message:'sync: update data.json', content:content, sha:sha||undefined})
-        });
-        if(r.ok){ savedAt.value='云端已同步 '+new Date().toLocaleTimeString('zh-CN',{hour12:false}); toast('已同步到云端，其他设备打开即可见'); }
-        else { const t=await r.text(); toast('同步失败：'+r.status+' '+t.slice(0,80)); }
-      }catch(e){ toast('同步失败：'+e.message); }
+        const r=await fetch('https://api.github.com/repos/'+GH_REPO+'/contents/data.json',{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/vnd.github+json','User-Agent':'ip-ledger',Authorization:'Bearer '+ghToken.value},body:JSON.stringify({message:'sync: update data.json', content:content, sha:sha||undefined})});
+        if(r.ok){ savedAt.value='云端已同步 '+new Date().toLocaleTimeString('zh-CN',{hour12:false}); if(!skipConfirm) toast('已同步到云端，其他设备打开即可见'); return true; }
+        else { const t=await r.text(); if(!skipConfirm) toast('同步失败：'+r.status+' '+t.slice(0,80)); return false; }
+      }catch(e){ if(!skipConfirm) toast('同步失败：'+e.message); return false; }
     }
+    async function syncToCloud(){ await pushCloud(false); }
+    let _pushTimer=null;
+    function autoPush(){
+      if(!ghToken.value) return;
+      if(sys.autoSync===false) return;
+      if(_pushTimer) clearTimeout(_pushTimer);
+      _pushTimer=setTimeout(()=>{ pushCloud(true); }, 6000);
+    }
+    let _pullTimer=null;
+    function startAuto(){ stopAuto(); if(sys.autoSync!==false){ _pullTimer=setInterval(()=>{ if(sys.autoSync!==false) initLoad(); }, 60000); } }
+    function stopAuto(){ if(_pullTimer){ clearInterval(_pullTimer); _pullTimer=null; } }
     initLoad();
 
     /* ====== 导出 ====== */
@@ -3104,7 +3125,7 @@ createApp({
       visibleCols,colVisible,allColsOn,toggleCol,toggleAllCols,expMenu,colMenu,exportScope,setScope,doExport,saveLocal,restoreSeed,savedAt,
       statCards,transferStats,transferRows,yearly,maxY,centerChart,maxC,activities,todos,todoCount,todoStats,sys,detail,form,toastMsg,
       qualityRows,qualityCount,fieldFill,
-      currentTitle,tagCls,stCls,todoReason,amtNote,toast,go,resetFilter,openDetail,openCreate,openEdit,save,del,toggleAll,syncToCloud,reloadCloud,ghToken};
+      currentTitle,tagCls,stCls,todoReason,amtNote,toast,go,resetFilter,openDetail,openCreate,openEdit,save,del,toggleAll,syncToCloud,reloadCloud,ghToken,bulkDelete,startAuto};
   }
 }).mount('#app');
 </script>
