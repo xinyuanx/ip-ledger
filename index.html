@@ -503,7 +503,7 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
               <div class="field"><label>本地存储键</label><input v-model="sys.storeKey" /></div>
               <div class="field"><label>云端自动同步</label><select v-model="sys.autoSync" @change="saveLocal(false);startAuto()"><option :value="true">开启（改动后自动推送到云端）</option><option :value="false">关闭（仅手动同步）</option></select></div>
               <div class="field full"><label>GitHub 令牌</label><input type="password" v-model="ghToken" placeholder="粘贴 GitHub 细粒度令牌（仅存本机浏览器，不进仓库）" /></div>
-              <div class="field full"><span style="padding:4px 0;color:var(--muted)">点「☁ 同步到云端」即把数据写回仓库 data.json，其他设备打开即同步。令牌仅保存在你本机，不会写入仓库或 data.json。</span></div>
+              <div class="field full"><span style="padding:4px 0;color:var(--muted)">令牌 = 向仓库写数据的权限凭证。每台<b>要写数据</b>的电脑都要各填一次（只看不写的完全不用填）。令牌仅保存在你本机浏览器，不会写入仓库或 data.json。</span></div>
               <div class="field full"><label>对接后端服务</label><input v-model="sys.api" /></div>
             </div>
             <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
@@ -519,8 +519,9 @@ td .sub{font-size:11.5px;color:#94a3b8;display:block;margin-top:2px}
              <div class="note" style="margin-top:14px">
                保存说明：所有修改在开启自动保存时立即写入本机浏览器 localStorage，刷新不丢失（仅本机可见）；<br>
                <b>云端自动刷新</b>：页面每 60 秒静默从云端 data.json 拉取一次，他人改动自动出现，无需手动点；<br>
-               <b>云端自动同步</b>：在上方填入 GitHub 令牌并开启「云端自动同步」后，每次改动约 6 秒自动推回 data.json，<b>其他设备打开即同步可见</b>（GitHub Pages 重建约 1 分钟）；<br>
-               也可随时手动点「☁ 从云端刷新 / 同步到云端」。当前状态：<b>{{savedAt || '尚未保存'}}</b>，共 {{rows.length}} 条记录。
+               <b>云端自动同步</b>：在上方填入 GitHub 令牌并开启「云端自动同步」后，每次改动约 6 秒自动推回 data.json，<b>其他设备约 1 分钟内自动更新</b>（GitHub Pages 重建约 1 分钟）；<br>
+               <b>合并规则</b>：云端有他人新改动且本机无未上传内容 → 自动采用云端（这就是“别人的修改自动同步过来”）；本机有未上传改动 → 保留本机并提示冲突，可选覆盖云端或采用云端；<br>
+               也可随时手动点「☁ 从云端刷新（采用云端，放弃本机未上传改动）/ 同步到云端」。当前状态：<b>{{savedAt || '尚未保存'}}</b>，共 {{rows.length}} 条记录。
              </div>
           </div>
         </div>
@@ -2925,6 +2926,7 @@ createApp({
     function serializeSys(){ return {name:sys.name,prefix:sys.prefix,days:sys.days,owner:sys.owner,api:sys.api,autoSave:sys.autoSave,syncUrl:sys.syncUrl}; }
     /* ====== 保存 / 持久化 ====== */
     function persist(){
+      try{ localStorage.setItem('ipl_dirty','1'); }catch(e){}
       if(!sys.autoSave) return;
       try{
         localStorage.setItem(sys.storeKey, JSON.stringify({rows:rows.value, sys:serializeSys(), savedAt:new Date().toISOString()}));
@@ -2947,31 +2949,67 @@ createApp({
       toast('已恢复为 Excel 原始数据，'+SEED.length+' 条');
       autoPush();
     }
-    async function initLoad(){
+    let _firstLoad=true;
+    async function initLoad(force){
       let cloud=null;
       try{ const r=await fetch('data.json?t='+Date.now(),{cache:'no-store'}); if(r.ok){ const j=await r.json(); if(j&&Array.isArray(j.rows)&&j.rows.length) cloud=j; } }catch(e){}
       let local=null;
       try{ const raw=localStorage.getItem(sys.storeKey); if(raw){ local=JSON.parse(raw); } }catch(e){}
       try{ const t=localStorage.getItem('ipl_gh_token'); if(t) ghToken.value=t; }catch(e){}
-      if(cloud){ rows.value=cloud.rows; if(cloud.sys) Object.assign(sys, cloud.sys); savedAt.value='云端共享 '+((cloud.savedAt||'').slice(0,19).replace('T',' ')||'已就绪'); document.title=sys.name; }
-      if(local&&Array.isArray(local.rows)&&local.rows.length){ rows.value=local.rows; if(local.sys) Object.assign(sys, local.sys); savedAt.value='本地存档 '+((local.savedAt||'').slice(0,19).replace('T',' ')); document.title=sys.name; }
-      if(!cloud&&!local){ savedAt.value='初始 Excel 数据（'+SEED.length+' 条）'; }
+      let baseRev=null, dirty=false;
+      try{ baseRev=localStorage.getItem('ipl_base_rev'); dirty=localStorage.getItem('ipl_dirty')==='1'; }catch(e){}
+      const hasLocal=!!(local&&Array.isArray(local.rows)&&local.rows.length);
+      const cloudRev=(cloud&&cloud.rev)||null;
+      const cloudChanged=!!(cloudRev&&(baseRev?(cloudRev!==baseRev):true));
+      let mode='local';
+      if(force&&cloud) mode='cloud';
+      else if(!hasLocal&&cloud) mode='cloud';
+      else if(cloud&&cloudChanged&&!dirty) mode='cloud';
+      else if(hasLocal&&dirty&&!_firstLoad) mode='keep';
+      else if(hasLocal) mode='local';
+      const conflict = hasLocal && dirty && cloudChanged;
+      if(mode==='cloud'){
+        rows.value=cloud.rows;
+        if(cloud.sys) Object.assign(sys, cloud.sys);
+        savedAt.value='云端共享 '+((cloud.savedAt||'').slice(0,19).replace('T',' ')||'已就绪');
+        try{
+          localStorage.setItem(sys.storeKey, JSON.stringify({rows:cloud.rows, sys:serializeSys(), savedAt:cloud.savedAt||new Date().toISOString()}));
+          localStorage.setItem('ipl_base_rev', cloudRev||'');
+          localStorage.setItem('ipl_dirty','0');
+          localStorage.removeItem('ipl_conflict_rev');
+        }catch(e){}
+        document.title=sys.name;
+      } else if(mode==='local'&&hasLocal){
+        rows.value=local.rows;
+        if(local.sys) Object.assign(sys, local.sys);
+        savedAt.value = conflict ? '本地未上传改动 · 云端有更新' : '本地存档 '+((local.savedAt||'').slice(0,19).replace('T',' '));
+        document.title=sys.name;
+      } else if(!hasLocal&&!cloud){
+        savedAt.value='初始 Excel 数据（'+SEED.length+' 条）';
+      }
+      if(conflict){
+        let notified=null;
+        try{ notified=localStorage.getItem('ipl_conflict_rev'); }catch(e){}
+        if(notified!==cloudRev){ try{ localStorage.setItem('ipl_conflict_rev',cloudRev); }catch(e){} toast('云端有他人新改动，本机有未上传改动：已保留本机数据。点「同步到云端」覆盖云端，或点「从云端刷新」采用云端'); }
+      }
+      _firstLoad=false;
       startAuto();
     }
-    function reloadCloud(){
-      initLoad(); toast('已从云端刷新');
+    async function reloadCloud(){
+      await initLoad(true); toast('已从云端刷新：采用云端最新数据');
     }
     const GH_REPO='xinyuanx/ip-ledger';
     async function pushCloud(skipConfirm){
       if(!ghToken.value){ if(!skipConfirm) toast('请在系统设置填写 GitHub 令牌后再同步'); return false; }
       if(!skipConfirm && !confirm('将本页全部数据覆盖保存到云端 data.json？')) return false;
       try{
-        const data={rows:rows.value, sys:serializeSys(), savedAt:new Date().toISOString()};
+        const rev=new Date().toISOString()+'-'+Math.random().toString(36).slice(2,8);
+        const data={rows:rows.value, sys:serializeSys(), savedAt:new Date().toISOString(), rev:rev};
         const content=btoa(unescape(encodeURIComponent(JSON.stringify(data))));
         let sha=null;
         try{ const g=await fetch('https://api.github.com/repos/'+GH_REPO+'/contents/data.json',{headers:{Authorization:'Bearer '+ghToken.value,'User-Agent':'ip-ledger','Accept':'application/vnd.github+json'}}); if(g.ok){ const j=await g.json(); sha=j.sha; } }catch(e){}
         const r=await fetch('https://api.github.com/repos/'+GH_REPO+'/contents/data.json',{method:'PUT',headers:{'Content-Type':'application/json','Accept':'application/vnd.github+json','User-Agent':'ip-ledger',Authorization:'Bearer '+ghToken.value},body:JSON.stringify({message:'sync: update data.json', content:content, sha:sha||undefined})});
-        if(r.ok){ savedAt.value='云端已同步 '+new Date().toLocaleTimeString('zh-CN',{hour12:false}); if(!skipConfirm) toast('已同步到云端，其他设备打开即可见'); return true; }
+        if(r.ok){ try{ localStorage.setItem('ipl_base_rev',rev); localStorage.setItem('ipl_dirty','0'); localStorage.removeItem('ipl_conflict_rev'); }catch(e){} savedAt.value='云端已同步 '+new Date().toLocaleTimeString('zh-CN',{hour12:false}); if(!skipConfirm) toast('已同步到云端，其他设备约 1 分钟内自动更新'); return true; }
         else { const t=await r.text(); if(!skipConfirm) toast('同步失败：'+r.status+' '+t.slice(0,80)); return false; }
       }catch(e){ if(!skipConfirm) toast('同步失败：'+e.message); return false; }
     }
